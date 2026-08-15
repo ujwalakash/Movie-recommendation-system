@@ -1,0 +1,55 @@
+from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Optional, List
+from app.dependencies import get_hybrid_model, get_links_df
+from app.schemas import RecommendationResponse, RecommendationList, DualRecommendationList
+from app.auth.supabase_auth import get_current_user
+from app.utils.enrichment import enrich_movies
+
+router = APIRouter(prefix="/recommend", tags=["Recommendations"])
+
+
+@router.get("/cold-start", response_model=RecommendationList)
+def cold_start_recommendations(
+    top_k: int = Query(10, ge=1, le=50),
+    include_trailer: bool = Query(True),   # pass ?include_trailer=false to skip YouTube calls
+    model=Depends(get_hybrid_model),
+    links_df=Depends(get_links_df)
+):
+    df = model.recommend(top_k=top_k)
+    enriched_recommendations = enrich_movies(df, links_df, include_trailer=include_trailer)
+
+    return {
+        "recommendations": enriched_recommendations
+    }
+
+
+@router.get("/user/personal", response_model=DualRecommendationList)
+def user_recommendations(
+    user_id: str = Depends(get_current_user),
+    top_k: int = Query(10, ge=1, le=50),
+    model=Depends(get_hybrid_model),
+    links_df=Depends(get_links_df)
+):
+    svd_df, ncf_df = model.recommend_dual(user_id=user_id, top_k=top_k)
+    svd_recs = enrich_movies(svd_df, links_df, include_trailer=True)
+    ncf_recs = enrich_movies(ncf_df, links_df, include_trailer=True)
+
+    return {
+        "svd_recommendations": svd_recs,
+        "ncf_recommendations": ncf_recs
+    }
+
+
+@router.get("/similar/{movie_id}", response_model=RecommendationList)
+def similar_movies(
+    movie_id: int,
+    top_k: int = Query(10, ge=1, le=50),
+    model=Depends(get_hybrid_model),
+    links_df=Depends(get_links_df)
+):
+    df = model.recommend(movie_id=movie_id, top_k=top_k)
+    enriched_recommendations = enrich_movies(df, links_df, include_trailer=True)
+
+    return {
+        "recommendations": enriched_recommendations
+    }
